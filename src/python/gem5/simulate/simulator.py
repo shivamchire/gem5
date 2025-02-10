@@ -47,6 +47,7 @@ from m5.util import warn
 
 from gem5.components.boards.abstract_board import AbstractBoard
 
+from ..resources.resource import WorkloadResource
 from .exit_event import ExitEvent
 from .exit_handler import (
     ClassicGeneratorExitHandler,
@@ -314,6 +315,12 @@ class Simulator:
         """
         for core in self._board.get_processor().get_cores():
             core._set_inst_stop_any_thread(inst, self._instantiated)
+
+    def get_workload(self) -> WorkloadResource:
+        """
+        Returns the workload of the board.
+        """
+        return self._board.get_workload()
 
     def get_stats(self) -> Dict:
         """
