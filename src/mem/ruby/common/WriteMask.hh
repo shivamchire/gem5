@@ -271,6 +271,16 @@ class WriteMask
         mAtomicOp = std::move(atomicOps);
     }
 
+    uint64_t
+    getUI64()
+    {
+        uint64_t tmp = 0;
+        for (int i = 0; i < 4; i++) {
+            tmp = tmp | (mMask.at(i) << i);
+        }
+        return tmp;
+    }
+
   private:
     int mSize;
     std::vector<bool> mMask;

@@ -74,6 +74,7 @@ structure(WriteMask, external="yes", desc="...") {
   bool test(int);
   int getBlockSize();
   void setBlockSize(int);
+  uint64_t getUI64();
 }
 
 structure(DataBlock, external = "yes", desc="..."){

@@ -44,6 +44,8 @@
 #include "base/compiler.hh"
 #include "base/intmath.hh"
 #include "base/logging.hh"
+#include "base/cprintf.hh"
+#include "base/trace.hh"
 #include "debug/HtmMem.hh"
 #include "debug/RubyCache.hh"
 #include "debug/RubyCacheTrace.hh"

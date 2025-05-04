@@ -49,6 +49,8 @@
 #include "base/compiler.hh"
 #include "base/intmath.hh"
 #include "base/statistics.hh"
+#include "base/cprintf.hh"
+#include "base/trace.hh"
 #include "debug/RubyCacheTrace.hh"
 #include "debug/RubySystem.hh"
 #include "mem/ruby/common/Address.hh"

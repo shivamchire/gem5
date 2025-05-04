@@ -145,6 +145,9 @@ structure(CPURequestMsg, desc="...", interface="Message") {
   bool isGLCSet, default="false",   desc="GLC flag value in the request";
   bool isSLCSet, default="false",   desc="SLC flag value in the request";
 
+  Addr origAddr,                    desc="Original address send by processing core. Used in sector cache while replying back to core.";
+  int reqDataSize,                  desc="Used in sector cache to determine size of data";
+
   bool functionalRead(Packet *pkt) {
     // Only PUTX messages contains the data block
     if (Type == CoherenceRequestType:VicDirty) {

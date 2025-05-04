@@ -77,6 +77,8 @@ machine(MachineType:TCC, "TCC Cache")
     // Coming from Memory Controller
     WBAck,                  desc="writethrough ack from memory";
     Bypass,                 desc="Bypass the entire L2 cache";
+    // For sector caches
+    RdBlkInvSect,           desc="Read an invalid sector in a valid cache line";
   }
 
   // STATES
@@ -107,6 +109,7 @@ machine(MachineType:TCC, "TCC Cache")
     bool Dirty,                 desc="Is the data dirty (diff from memory?)";
     DataBlock DataBlk,          desc="Data for the block";
     WriteMask writeMask,        desc="Dirty byte mask";
+    WriteMask validSect,        desc="Sectors which are valid";
   }
 
   structure(TBE, desc="...") {
@@ -124,6 +127,7 @@ machine(MachineType:TCC, "TCC Cache")
     bool isGLCSet,                   desc="Bypass L1 Cache";
     bool isSLCSet,                   desc="Bypass L1 and L2 Cache";
     WriteMask atomicWriteMask,       desc="Atomic write mask";
+    WriteMask reqSect,               desc="Sectors for which request was send";
   }
 
   structure(TBETable, external="yes") {
@@ -253,6 +257,21 @@ machine(MachineType:TCC, "TCC Cache")
       error("Invalid RequestType type in checkResourceAvailable");
       return true;
     }
+  }
+
+  void setMaskForSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
+    int i := static_cast(int, "value", (origAddr - lineAddr)/16);
+    if ((size%16) > 0) {
+        m.setMask(i, ((size/16) + 1));
+    } else {
+        m.setMask(i, size/16);
+    }
+  }
+
+  bool isAddrPrstInSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
+      WriteMask tmp(m.getBlockSize());
+      setMaskForSector(tmp, origAddr, lineAddr, size);
+      return m.containMask(tmp);
   }
 
 
@@ -421,7 +440,11 @@ machine(MachineType:TCC, "TCC Cache")
             // If a cache block already exists, then evict it.
             trigger(Event:RdBypassEvict, in_msg.addr, cache_entry, tbe);
           } else {
-            trigger(Event:RdBlk, in_msg.addr, cache_entry, tbe);
+            if (getState(tbe, cache_entry, address) == State:V && isAddrPrstInSector(cacheEntry.validSect, in_msg.origAddr, in_msg.addr, in_msg.reqDataSize)) {
+                trigger(Event:RdBlk, in_msg.addr, cache_entry, tbe);
+            } else {
+                trigger(Event:RdBlkInvSect, in_msg.addr, cache_entry, tbe);
+            }
           }
         } else if (in_msg.Type == CoherenceRequestType:WriteFlush) {
             trigger(Event:Flush, in_msg.addr, cache_entry, tbe);
@@ -491,6 +514,10 @@ machine(MachineType:TCC, "TCC Cache")
           out_msg.DataBlk := in_msg.DataBlk;
         } else {
           out_msg.DataBlk := cache_entry.DataBlk;
+          cache_entry.validSect.orMask(tbe.reqSect);
+          DPRINTFN("sdr_sendDataResponse: validSect = %x\n", cache_entry.validSect.getUI64());
+          // Not clearing tbe.reqSect here since it will be cleared in deallocate TBE. As we dont know if there is any pending request
+          // and which bit to clear. TODO Add mechanism to track which response correspond to which sector
         }
         out_msg.isGLCSet := in_msg.isGLCSet;
         out_msg.isSLCSet := in_msg.isSLCSet;
@@ -561,6 +588,14 @@ machine(MachineType:TCC, "TCC Cache")
         out_msg.MessageSize := in_msg.MessageSize;
         out_msg.isGLCSet := in_msg.isGLCSet;
         out_msg.isSLCSet := in_msg.isSLCSet;
+        int i := static_cast(int, "value", (in_msg.origAddr - in_msg.addr)/16);
+        if ((in_msg.reqDataSize%16) > 0) {
+            tbe.reqSect.setMask(i, ((in_msg.reqDataSize/16) + 1));
+        } else {
+            tbe.reqSect.setMask(i, in_msg.reqDataSize/16);
+        }
+        DPRINTFN("rd_requestData: addr = %x, origAddr = %x, len = %d\n", in_msg.addr, in_msg.origAddr, in_msg.reqDataSize);
+        DPRINTFN("rd_requestData: mask = %x\n", tbe.reqSect.getUI64());
         DPRINTF(RubySlicc, "out_msg: %s\n", out_msg);
       }
     }
@@ -723,6 +758,8 @@ machine(MachineType:TCC, "TCC Cache")
     // last one
     tbe.numPending := tbe.numPending - 1;
     if (tbe.numPending == 0) {
+      // TODO Do not clear reqSect blindly, there may be more request in pipeline
+      tbe.reqSect.clear();
       tbe.Destination.clear();
       TBEs.deallocate(address);
       unset_tbe();
@@ -1012,6 +1049,13 @@ machine(MachineType:TCC, "TCC Cache")
     p_profileHit;
     sd_sendData;
     ut_updateTag;
+    p_popRequestQueue;
+  }
+
+  transition(V, RdBlkInvSect, IV) {TagArrayRead, DataArrayRead} {
+    p_profileMiss;
+    t_allocateTBE;
+    rd_requestData;
     p_popRequestQueue;
   }
 
