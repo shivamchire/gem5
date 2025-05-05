@@ -83,6 +83,9 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     TCC_AckWB,       desc="TCC Ack for WB";
     // Disable L1 cache
     Bypass,          desc="Bypass the entire L1 cache";
+
+    // For sector caches
+    RdBlkInvSect,           desc="Read an invalid sector in a valid cache line";
  }
 
   enumeration(RequestType,
@@ -101,6 +104,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     DataBlock DataBlk,          desc="data for the block";
     bool FromL2, default="false", desc="block just moved from L2";
     WriteMask writeMask, desc="written bytes masks";
+    WriteMask validSect,        desc="Sectors which are valid";
   }
 
   structure(TBE, desc="...") {
@@ -111,6 +115,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     bool Shared,       desc="Victim hit by shared probe";
     bool isGLCSet,     desc="Bypass L1 Cache";
     bool isSLCSet,     desc="Bypass L1 and L2 Cache";
+    WriteMask reqSect,               desc="Sectors for which request was send";
    }
 
   structure(TBETable, external="yes") {
@@ -260,6 +265,22 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     }
   }
 
+  void setMaskForSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
+    int i := static_cast(int, "value", (origAddr - lineAddr)/16);
+    if ((size%16) > 0) {
+        m.setMask(i, ((size/16) + 1));
+    } else {
+        m.setMask(i, size/16);
+    }
+  }
+
+  bool isAddrPrstInSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
+      WriteMask tmp;
+      tmp.setBlockSize(m.getBlockSize());
+      setMaskForSector(tmp, origAddr, lineAddr, size);
+      return m.containsMask(tmp);
+  }
+
   // Out Ports
 
   out_port(requestNetwork_out, CPURequestMsg, requestFromTCP);
@@ -318,7 +339,12 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
             trigger(Event:LoadBypassEvict, in_msg.LineAddress, cache_entry, tbe);
           }
           else {
-            trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
+            if (getState(tbe, cache_entry, in_msg.LineAddress) == State:V && !isAddrPrstInSector(cache_entry.validSect, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size)) {
+                DPRINTFN("Triggering RdBlkInvSect event\n");
+                trigger(Event:RdBlkInvSect, in_msg.LineAddress, cache_entry, tbe);
+            } else {
+                trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
+            }
           }
         } else if (in_msg.Type == RubyRequestType:ATOMIC ||
                    in_msg.Type == RubyRequestType:ATOMIC_RETURN ||
@@ -374,6 +400,9 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
         out_msg.isSLCSet := in_msg.isSLCSet;
         out_msg.origAddr := in_msg.PhysicalAddress;
         out_msg.reqDataSize := in_msg.Size;
+        setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
+        DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
+        DPRINTFN("TCP:n_issueRdBlk: reqSect = %x\n", tbe.reqSect.getUI64());
       }
     }
   }
@@ -526,6 +555,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
   }
 
   action(d_deallocateTBE, "d", desc="Deallocate TBE") {
+    tbe.reqSect.clear();
     TBEs.deallocate(address);
     unset_tbe();
   }
@@ -704,6 +734,8 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       DataBlock tmp := in_msg.DataBlk;
       tmp.copyPartial(cache_entry.DataBlk,cache_entry.writeMask);
       cache_entry.DataBlk := tmp;
+      cache_entry.validSect.orMask(tbe.reqSect);
+      DPRINTFN("TCP: validSect = %x\n", cache_entry.validSect.getUI64());
     }
   }
 
@@ -755,6 +787,13 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
   // to prevent subsequent requests to same cache line from also going to TCC
   // while this request is pending
   transition(I, Load, IV) {TagArrayRead} {
+    t_allocateTBE;
+    n_issueRdBlk;
+    uu_profileDataMiss;
+    p_popMandatoryQueue;
+  }
+
+  transition(V, RdBlkInvSect, IV) {TagArrayRead} {
     t_allocateTBE;
     n_issueRdBlk;
     uu_profileDataMiss;
