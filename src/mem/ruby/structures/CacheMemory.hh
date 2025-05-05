@@ -124,6 +124,9 @@ class CacheMemory : public SimObject
     bool isBlockInvalid(int64_t cache_set, int64_t loc);
     bool isBlockNotBusy(int64_t cache_set, int64_t loc);
 
+	// for each byte access, note the sector
+	void trackSector(Addr byteAddr);
+
     // Hook for checkpointing the contents of the cache
     void recordCacheContents(int cntrl, CacheRecorder* tr) const;
 
@@ -198,6 +201,7 @@ class CacheMemory : public SimObject
     int m_start_index_bit;
     bool m_resource_stalls;
     int m_block_size;
+	int m_sector_size = 16;
 
     /**
      * We store all the ReplacementData in a 2-dimensional array. By doing
@@ -254,6 +258,10 @@ class CacheMemory : public SimObject
           statistics::Formula m_prefetch_accesses;
 
           statistics::Vector m_accessModeType;
+
+		  // unique sectors tracking
+		  statistics::Scalar numBlocksAllocated;
+		  statistics::Histogram uniqSectorHist;
       } cacheMemoryStats;
 
     public:

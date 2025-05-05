@@ -194,6 +194,15 @@ CacheMemory::getAddressAtIdx(int idx) const
     return entry->m_Address;
 }
 
+
+void
+CacheMemory::trackSector(Addr byteAddr)
+{
+	Addr lineAddr = makeLineAddress(byteAddr);
+    if (auto *e = lookup(lineAddr))
+        e->noteSector(byteAddr);
+}
+
 bool
 CacheMemory::tryCacheAccess(Addr address, RubyRequestType type,
                             DataBlock*& data_ptr)
@@ -299,6 +308,11 @@ CacheMemory::allocate(Addr address, AbstractCacheEntry *entry)
     entry->initBlockSize(m_block_size);
     entry->setRubySystem(m_ruby_system);
 
+	// unique sector tracking
+	entry->resetSectorStats();	// start fresh
+	entry->noteSector(addr);	// first touch that caused the fill
+
+
     // Find the first open slot
     int64_t cacheSet = addressToCacheSet(address);
     std::vector<AbstractCacheEntry*> &set = m_cache[cacheSet];
@@ -338,6 +352,10 @@ CacheMemory::deallocate(Addr address)
     DPRINTF(RubyCache, "deallocating address: %#x\n", address);
     AbstractCacheEntry* entry = lookup(address);
     assert(entry != nullptr);
+
+	// Commit unique sector count before throwing entry away
+	cacheMemoryStats.uniqSectorHist.sample(entry->getUniqSectorCnt());
+
     m_replacementPolicy_ptr->invalidate(entry->replacementData);
     uint32_t cache_set = entry->getSet();
     uint32_t way = entry->getWay();
@@ -572,7 +590,9 @@ CacheMemoryStats::CacheMemoryStats(statistics::Group *parent)
       ADD_STAT(m_prefetch_misses, "Number of cache prefetch misses"),
       ADD_STAT(m_prefetch_accesses, "Number of cache prefetch accesses",
                m_prefetch_hits + m_prefetch_misses),
-      ADD_STAT(m_accessModeType, "")
+      ADD_STAT(m_accessModeType, ""),
+	  ADD_STAT(numBlocksAllocated, "Blocks that reached replacement");
+	  ADD_STAT(uniqSectorHist, "Histogram: unique sectors touched/line");
 {
     numDataArrayReads
         .flags(statistics::nozero);
@@ -630,6 +650,11 @@ CacheMemoryStats::CacheMemoryStats(statistics::Group *parent)
     m_accessModeType
         .init(RubyRequestType_NUM)
         .flags(statistics::pdf | statistics::total);
+
+	uniqSectorHist
+		.init(64 / 16 + 1)        // e.g. 0‑4 for 64‑B/16‑B
+		.flags(statistics::pdf | statistics::dist | statistics::nozero |
+           statistics::nonan);
 
     for (int i = 0; i < RubyAccessMode_NUM; i++) {
         m_accessModeType
