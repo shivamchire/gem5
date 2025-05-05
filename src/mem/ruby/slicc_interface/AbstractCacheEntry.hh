@@ -127,6 +127,22 @@ class AbstractCacheEntry : public ReplaceableEntry
     // hardware transactional memory
     bool m_htmInReadSet;
     bool m_htmInWriteSet;
+
+
+
+  // Unique Sectors Tracking
+  private:
+	uint8_t sectorSeenMask = 0;
+	uint8_t uniqSectorCnt = 0;
+
+  public:
+	void resetSectorStats();
+	uint8_t getUniqueSectorCnt() const;
+	
+	// mark sector containing addr as "seen", and bumps counter once the first time it is touched.
+	void noteSector(Addr addr, unsigned int blkSize = 64, unsigned int sectorSize = 16);
+
+
 };
 
 inline std::ostream&
