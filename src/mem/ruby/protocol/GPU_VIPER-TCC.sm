@@ -269,9 +269,10 @@ machine(MachineType:TCC, "TCC Cache")
   }
 
   bool isAddrPrstInSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
-      WriteMask tmp(m.getBlockSize());
+      WriteMask tmp;
+      tmp.setBlockSize(m.getBlockSize());
       setMaskForSector(tmp, origAddr, lineAddr, size);
-      return m.containMask(tmp);
+      return m.containsMask(tmp);
   }
 
 
@@ -440,10 +441,11 @@ machine(MachineType:TCC, "TCC Cache")
             // If a cache block already exists, then evict it.
             trigger(Event:RdBypassEvict, in_msg.addr, cache_entry, tbe);
           } else {
-            if (getState(tbe, cache_entry, address) == State:V && isAddrPrstInSector(cacheEntry.validSect, in_msg.origAddr, in_msg.addr, in_msg.reqDataSize)) {
-                trigger(Event:RdBlk, in_msg.addr, cache_entry, tbe);
-            } else {
+            if (getState(tbe, cache_entry, in_msg.addr) == State:V && isAddrPrstInSector(cache_entry.validSect, in_msg.origAddr, in_msg.addr, in_msg.reqDataSize)) {
+                DPRINTFN("Triggering RdBlkInvSect event\n");
                 trigger(Event:RdBlkInvSect, in_msg.addr, cache_entry, tbe);
+            } else {
+                trigger(Event:RdBlk, in_msg.addr, cache_entry, tbe);
             }
           }
         } else if (in_msg.Type == CoherenceRequestType:WriteFlush) {
@@ -515,7 +517,7 @@ machine(MachineType:TCC, "TCC Cache")
         } else {
           out_msg.DataBlk := cache_entry.DataBlk;
           cache_entry.validSect.orMask(tbe.reqSect);
-          DPRINTFN("sdr_sendDataResponse: validSect = %x\n", cache_entry.validSect.getUI64());
+          // DPRINTFN("sdr_sendDataResponse: validSect = %x\n", cache_entry.validSect.getUI64());
           // Not clearing tbe.reqSect here since it will be cleared in deallocate TBE. As we dont know if there is any pending request
           // and which bit to clear. TODO Add mechanism to track which response correspond to which sector
         }
@@ -594,8 +596,7 @@ machine(MachineType:TCC, "TCC Cache")
         } else {
             tbe.reqSect.setMask(i, in_msg.reqDataSize/16);
         }
-        DPRINTFN("rd_requestData: addr = %x, origAddr = %x, len = %d\n", in_msg.addr, in_msg.origAddr, in_msg.reqDataSize);
-        DPRINTFN("rd_requestData: mask = %x\n", tbe.reqSect.getUI64());
+        // DPRINTFN("rd_requestData: addr = %x, origAddr = %x, len = %d\n", in_msg.addr, in_msg.origAddr, in_msg.reqDataSize);
         DPRINTF(RubySlicc, "out_msg: %s\n", out_msg);
       }
     }
