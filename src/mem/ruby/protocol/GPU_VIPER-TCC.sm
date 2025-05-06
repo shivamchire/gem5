@@ -441,6 +441,7 @@ machine(MachineType:TCC, "TCC Cache")
             // If a cache block already exists, then evict it.
             trigger(Event:RdBypassEvict, in_msg.addr, cache_entry, tbe);
           } else {
+			L2cache.trackSector(in_msg.origAddr);
             if (getState(tbe, cache_entry, in_msg.addr) == State:V && !isAddrPrstInSector(cache_entry.validSect, in_msg.origAddr, in_msg.addr, in_msg.reqDataSize)) {
                 DPRINTFN("Triggering RdBlkInvSect event\n");
                 trigger(Event:RdBlkInvSect, in_msg.addr, cache_entry, tbe);
