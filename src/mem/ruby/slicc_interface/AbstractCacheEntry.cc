@@ -126,5 +126,27 @@ AbstractCacheEntry::getInHtmWriteSet() const
     return m_htmInWriteSet;
 }
 
+void   
+AbstractCacheEntry::resetSectorStats()          
+{ 
+	sectorSeenMask = uniqSectorCnt = 0;
+}
+   
+uint8_t 
+AbstractCacheEntry::getUniqSectorCnt() const   
+{ 
+	return uniqSectorCnt; 
+}
+
+void AbstractCacheEntry::noteSector(Addr addr, unsigned int blkSize, unsigned int sectorSize)
+{
+	unsigned int idx = (addr & (blkSize - 1)) / sectorSize;   // 0‑3
+	uint8_t  bit = 1u << idx;
+	if (!(sectorSeenMask & bit)) {        // first visit
+		sectorSeenMask |= bit;
+		++uniqSectorCnt;
+	}
+}
+
 } // namespace ruby
 } // namespace gem5
