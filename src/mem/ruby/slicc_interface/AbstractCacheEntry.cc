@@ -133,7 +133,7 @@ AbstractCacheEntry::resetSectorStats()
 }
    
 uint8_t 
-getUniqSectorCnt() const   
+AbstractCacheEntry::getUniqSectorCnt() const   
 { 
 	return uniqSectorCnt; 
 }

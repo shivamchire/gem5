@@ -310,7 +310,7 @@ CacheMemory::allocate(Addr address, AbstractCacheEntry *entry)
 
 	// unique sector tracking
 	entry->resetSectorStats();	// start fresh
-	entry->noteSector(addr);	// first touch that caused the fill
+	entry->noteSector(address);	// first touch that caused the fill
 
 
     // Find the first open slot
@@ -355,6 +355,7 @@ CacheMemory::deallocate(Addr address)
 
 	// Commit unique sector count before throwing entry away
 	cacheMemoryStats.uniqSectorHist.sample(entry->getUniqSectorCnt());
+	cacheMemoryStats.numBlocksAllocated++;
 
     m_replacementPolicy_ptr->invalidate(entry->replacementData);
     uint32_t cache_set = entry->getSet();
@@ -591,8 +592,8 @@ CacheMemoryStats::CacheMemoryStats(statistics::Group *parent)
       ADD_STAT(m_prefetch_accesses, "Number of cache prefetch accesses",
                m_prefetch_hits + m_prefetch_misses),
       ADD_STAT(m_accessModeType, ""),
-	  ADD_STAT(numBlocksAllocated, "Blocks that reached replacement");
-	  ADD_STAT(uniqSectorHist, "Histogram: unique sectors touched/line");
+	  ADD_STAT(numBlocksAllocated, "Blocks that reached replacement"),
+	  ADD_STAT(uniqSectorHist, "Histogram: unique sectors touched/line")
 {
     numDataArrayReads
         .flags(statistics::nozero);
