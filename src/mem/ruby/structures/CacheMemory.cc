@@ -199,7 +199,7 @@ CacheMemory::getAddressAtIdx(int idx) const
 void
 CacheMemory::trackSector(Addr origAddr, Addr lineAddr)
 {
-	DPRINTFN("trackSector itself origAddr: %#x, lineAddr:%#x\n", origAddr, lineAddr);
+	// DPRINTFN("trackSector itself origAddr: %#x, lineAddr:%#x\n", origAddr, lineAddr);
 	AbstractCacheEntry* e = lookup(lineAddr);
 	if (e != nullptr) {
 		e->noteSector(origAddr, lineAddr);
@@ -379,7 +379,7 @@ CacheMemory::deallocate(Addr address)
 	// Commit unique sector count before throwing entry away
 	cacheMemoryStats.uniqSectorHist.sample(entry->getUniqSectorCnt());
 	cacheMemoryStats.numBlocksAllocated++;
-	DPRINTFN("Deallocating with sectors accessed: %u\n", entry->getUniqSectorCnt());
+	// DPRINTFN("Deallocating with sectors accessed: %u\n", entry->getUniqSectorCnt());
 
     m_replacementPolicy_ptr->invalidate(entry->replacementData);
     uint32_t cache_set = entry->getSet();
@@ -700,7 +700,7 @@ CacheMemory::regStats()
     // 3. attach the dump‑time sweep
     statistics::registerDumpCallback([this](){
         this->sampleAllLiveLines();
-		DPRINTFN("Calling sampleAllLiveLines()");
+		// DPRINTFN("Calling sampleAllLiveLines()");
     });
 }
 
