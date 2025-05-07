@@ -196,7 +196,6 @@ CacheMemory::getAddressAtIdx(int idx) const
     return entry->m_Address;
 }
 
-
 void
 CacheMemory::trackSector(Addr origAddr, Addr lineAddr)
 {
@@ -206,6 +205,25 @@ CacheMemory::trackSector(Addr origAddr, Addr lineAddr)
 		e->noteSector(origAddr, lineAddr);
 	}
 }
+
+void
+CacheMemory::sampleAllLiveLines()
+{
+    for (int set = 0; set < m_cache_num_sets; ++set) {
+        for (int way = 0; way < m_cache_assoc; ++way) {
+            auto *entry = m_cache[set][way];
+            if (entry &&
+                entry->m_Permission != AccessPermission_NotPresent &&
+                entry->m_Permission != AccessPermission_Invalid)
+            {
+                cacheMemoryStats.uniqSectorHist.sample(
+                        entry->getUniqSectorCnt());
+                cacheMemoryStats.numBlocksAllocated++;
+            }
+        }
+    }
+}
+
 
 bool
 CacheMemory::tryCacheAccess(Addr address, RubyRequestType type,
@@ -315,7 +333,7 @@ CacheMemory::allocate(Addr address, AbstractCacheEntry *entry)
 	// unique sector tracking
 	cacheMemoryStats.numBlocksAllocated++;
 	entry->resetSectorStats();	// start fresh
-	//entry->noteSector(address, address);	// first touch that caused the fill
+	entry->noteSector(address, address);	// first touch that caused the fill
 											// already a lineAddress, meaning sector=0
 
     // Find the first open slot
@@ -361,6 +379,7 @@ CacheMemory::deallocate(Addr address)
 	// Commit unique sector count before throwing entry away
 	cacheMemoryStats.uniqSectorHist.sample(entry->getUniqSectorCnt());
 	cacheMemoryStats.numBlocksAllocated++;
+	DPRINTFN("Deallocating with sectors accessed: %u\n", entry->getUniqSectorCnt());
 
     m_replacementPolicy_ptr->invalidate(entry->replacementData);
     uint32_t cache_set = entry->getSet();
@@ -668,6 +687,20 @@ CacheMemoryStats::CacheMemoryStats(statistics::Group *parent)
             .flags(statistics::nozero)
             ;
     }
+}
+
+void
+CacheMemory::regStats()
+{
+    // 1. chain upward
+    SimObject::regStats();
+
+    // 2. existing stat initialisation already done in CacheMemoryStats ctor
+
+    // 3. attach the dump‑time sweep
+    statistics::registerDumpCallback([this](){
+        this->sampleAllLiveLines();
+    });
 }
 
 // assumption: SLICC generated files will only call this function

@@ -142,10 +142,13 @@ void AbstractCacheEntry::noteSector(Addr origAddr, Addr lineAddr)
 {
 	unsigned int idx = (origAddr - lineAddr) / 16;
 	uint8_t  bit = 1u << idx;
-	DPRINTFN("noteSector original address: %#x, lineAddr: %#x, idx: %u\n", origAddr, lineAddr, idx);	
+	DPRINTFN("noteSector original address: %#x, lineAddr: %#x, idx: %u\n", origAddr, lineAddr, idx);
+	DPRINTFN("mask: %u bit: %u\n", sectorSeenMask, bit);	
 	if (!(sectorSeenMask & bit)) {        // first visit
+		DPRINTFN("noteSector unique access!\n");
 		sectorSeenMask |= bit;
 		++uniqSectorCnt;
+		DPRINTFN("new count: %u\n", uniqSectorCnt);
 	}
 }
 

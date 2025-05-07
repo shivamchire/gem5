@@ -264,6 +264,15 @@ class CacheMemory : public SimObject
 		  statistics::Histogram uniqSectorHist;
       } cacheMemoryStats;
 
+
+	public:
+		// to push a callback that calls sampleAllLiveLines at the end
+		void regStats() override;
+
+		// callback to record all live histogram data from sector tracking
+		// prior to statsDump();
+		void sampleAllLiveLines();
+
     public:
       // These function increment the number of demand hits/misses by one
       // each time they are called
