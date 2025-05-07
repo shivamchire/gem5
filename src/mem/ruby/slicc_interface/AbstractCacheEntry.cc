@@ -138,15 +138,17 @@ AbstractCacheEntry::getUniqSectorCnt() const
 	return uniqSectorCnt; 
 }
 
-void AbstractCacheEntry::noteSector(Addr addr, unsigned int blkSize, unsigned int sectorSize)
+void AbstractCacheEntry::noteSector(Addr origAddr, Addr lineAddr)
 {
-	unsigned int idx = (addr & (blkSize - 1)) / sectorSize;   // 0‑3
+	unsigned int idx = (origAddr - lineAddr) / 16;
 	uint8_t  bit = 1u << idx;
+	DPRINTFN("noteSector original address: %#x, lineAddr: %#x, idx: %u\n", origAddr, lineAddr, idx);	
 	if (!(sectorSeenMask & bit)) {        // first visit
 		sectorSeenMask |= bit;
 		++uniqSectorCnt;
 	}
 }
+
 
 } // namespace ruby
 } // namespace gem5

@@ -401,8 +401,8 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
         out_msg.origAddr := in_msg.PhysicalAddress;
         out_msg.reqDataSize := in_msg.Size;
         setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
-        DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
-        DPRINTFN("TCP:n_issueRdBlk: reqSect = %x\n", tbe.reqSect.getUI64());
+        //DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
+        //DPRINTFN("TCP:n_issueRdBlk: reqSect = %x\n", tbe.reqSect.getUI64());
       }
     }
   }
@@ -735,7 +735,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       tmp.copyPartial(cache_entry.DataBlk,cache_entry.writeMask);
       cache_entry.DataBlk := tmp;
       cache_entry.validSect.orMask(tbe.reqSect);
-      DPRINTFN("TCP: validSect = %x\n", cache_entry.validSect.getUI64());
+      //DPRINTFN("TCP: validSect = %x\n", cache_entry.validSect.getUI64());
     }
   }
 

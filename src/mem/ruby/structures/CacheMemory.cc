@@ -198,11 +198,13 @@ CacheMemory::getAddressAtIdx(int idx) const
 
 
 void
-CacheMemory::trackSector(Addr byteAddr)
+CacheMemory::trackSector(Addr origAddr, Addr lineAddr)
 {
-	Addr lineAddr = makeLineAddress(byteAddr);
-    if (auto *e = lookup(lineAddr))
-        e->noteSector(byteAddr);
+	DPRINTFN("trackSector itself origAddr: %#x, lineAddr:%#x\n", origAddr, lineAddr);
+	AbstractCacheEntry* e = lookup(lineAddr);
+	if (e != nullptr) {
+		e->noteSector(origAddr, lineAddr);
+	}
 }
 
 bool
@@ -311,9 +313,10 @@ CacheMemory::allocate(Addr address, AbstractCacheEntry *entry)
     entry->setRubySystem(m_ruby_system);
 
 	// unique sector tracking
+	cacheMemoryStats.numBlocksAllocated++;
 	entry->resetSectorStats();	// start fresh
-	entry->noteSector(address);	// first touch that caused the fill
-
+	//entry->noteSector(address, address);	// first touch that caused the fill
+											// already a lineAddress, meaning sector=0
 
     // Find the first open slot
     int64_t cacheSet = addressToCacheSet(address);

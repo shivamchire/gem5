@@ -125,7 +125,7 @@ class CacheMemory : public SimObject
     bool isBlockNotBusy(int64_t cache_set, int64_t loc);
 
 	// for each byte access, note the sector
-	void trackSector(Addr byteAddr);
+	void trackSector(Addr origAddr, Addr lineAddr);
 
     // Hook for checkpointing the contents of the cache
     void recordCacheContents(int cntrl, CacheRecorder* tr) const;

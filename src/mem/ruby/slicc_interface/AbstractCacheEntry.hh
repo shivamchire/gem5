@@ -140,8 +140,7 @@ class AbstractCacheEntry : public ReplaceableEntry
 	uint8_t getUniqSectorCnt() const;
 	
 	// mark sector containing addr as "seen", and bumps counter once the first time it is touched.
-	void noteSector(Addr addr, unsigned int blkSize = 64, unsigned int sectorSize = 16);
-
+	void noteSector(Addr origAddr, Addr lineAddr);
 
 };
 
