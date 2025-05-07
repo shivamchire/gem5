@@ -700,6 +700,7 @@ CacheMemory::regStats()
     // 3. attach the dump‑time sweep
     statistics::registerDumpCallback([this](){
         this->sampleAllLiveLines();
+		DPRINTFN("Calling sampleAllLiveLines()");
     });
 }
 
