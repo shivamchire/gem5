@@ -340,7 +340,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
           }
           else {
             if (getState(tbe, cache_entry, in_msg.LineAddress) == State:V && !isAddrPrstInSector(cache_entry.validSect, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size)) {
-                DPRINTFN("Triggering RdBlkInvSect event\n");
+                // DPRINTFN("Triggering RdBlkInvSect event\n");
                 trigger(Event:RdBlkInvSect, in_msg.LineAddress, cache_entry, tbe);
             } else {
                 trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
