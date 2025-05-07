@@ -42,6 +42,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
    int TCC_select_num_bits;
    Cycles issue_latency := 40;  // time to send data down to TCC
    Cycles l2_hit_latency := 18;
+   int predictor := 0;
 
   MessageBuffer * requestFromTCP, network="To", virtual_network="1", vnet_type="request";
   MessageBuffer * responseFromTCP, network="To", virtual_network="3", vnet_type="response";
@@ -116,6 +117,8 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     bool isGLCSet,     desc="Bypass L1 Cache";
     bool isSLCSet,     desc="Bypass L1 and L2 Cache";
     WriteMask reqSect,               desc="Sectors for which request was send";
+    // int predictor,      desc="bdfb";
+    WriteMask secUseMask, desc="Which sectors were touched";
    }
 
   structure(TBETable, external="yes") {
@@ -339,10 +342,18 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
             trigger(Event:LoadBypassEvict, in_msg.LineAddress, cache_entry, tbe);
           }
           else {
+            // Check predictor
             if (getState(tbe, cache_entry, in_msg.LineAddress) == State:V && !isAddrPrstInSector(cache_entry.validSect, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size)) {
                 DPRINTFN("Triggering RdBlkInvSect event\n");
                 trigger(Event:RdBlkInvSect, in_msg.LineAddress, cache_entry, tbe);
             } else {
+                DPRINTFN("Load, updating usedsecs");
+                DPRINTFN("%d",tbe.secUseMask.getBlockSize());
+                DPRINTFN(" %d",tbe.secUseMask.count());
+                DPRINTFN(" %x", in_msg.PhysicalAddress);
+                DPRINTFN(" %x", in_msg.LineAddress);
+                DPRINTFN(" %d", in_msg.Size);
+                setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size);
                 trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
             }
           }
@@ -386,7 +397,17 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     unset_cache_entry();
   }
 
+  // action(l_updateUsedSecs, "lus", desc="Update which sectors are touched") {
+  //   DPRINTFN("Updating usedsecs from ");
+  //   peek(mandatoryQueue_in, RubyRequest) {
+  //     DPRINTFN("%d",tbe.secUseMask.count());
+  //     setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, address, in_msg.Size);
+  //     DPRINTFN(" to %d\n",tbe.secUseMask.count());
+  //   }
+  // }
+
   action(n_issueRdBlk, "n", desc="Issue RdBlk") {
+    // Check if physical address differs from sectors
     enqueue(requestNetwork_out, CPURequestMsg, issue_latency) {
       out_msg.addr := address;
       out_msg.Type := CoherenceRequestType:RdBlk;
@@ -398,11 +419,25 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       peek(mandatoryQueue_in, RubyRequest) {
         out_msg.isGLCSet := in_msg.isGLCSet;
         out_msg.isSLCSet := in_msg.isSLCSet;
-        out_msg.origAddr := in_msg.PhysicalAddress;
-        out_msg.reqDataSize := in_msg.Size;
-        setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
-        DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
-        DPRINTFN("TCP:n_issueRdBlk: reqSect = %x\n", tbe.reqSect.getUI64());
+        DPRINTFN("RdBlk ");
+
+        // If CG, set origAddr to address? and size to 64?, set used secs to current sec
+        if (predictor < 2) {
+          DPRINTFN("predicting FG\n");
+          out_msg.origAddr := in_msg.PhysicalAddress;
+          out_msg.reqDataSize := in_msg.Size;
+          setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
+          setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, address, in_msg.Size);
+        } else {
+          DPRINTFN("predicting CG");
+          out_msg.origAddr := address;
+          out_msg.reqDataSize := 64;
+          setMaskForSector(tbe.reqSect, address, address, 64);
+          setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, address, in_msg.Size);
+        }
+
+        // DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
+        // DPRINTFN("TCP:n_issueRdBlk: reqSect = %x\n", tbe.reqSect.getUI64());
       }
     }
   }
@@ -555,6 +590,23 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
   }
 
   action(d_deallocateTBE, "d", desc="Deallocate TBE") {
+    // Check used sectors
+    DPRINTFN("Deallocate TBE ");
+    if (tbe.secUseMask.count() >= 2) {
+      DPRINTFN(" towards CG\n");
+      predictor := predictor + 1; // Move towards CG
+      if (predictor > 3) {
+        predictor := 3;
+      }
+    } else {
+      DPRINTFN(" towards FG\n");
+      predictor := predictor - 1; // Move towards FG
+      if (predictor < 0) {
+        predictor := 0;
+      }
+    }
+    DPRINTFN("predictor after deallocate: %d",predictor);
+    tbe.secUseMask.clear();
     tbe.reqSect.clear();
     TBEs.deallocate(address);
     unset_tbe();
@@ -735,7 +787,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       tmp.copyPartial(cache_entry.DataBlk,cache_entry.writeMask);
       cache_entry.DataBlk := tmp;
       cache_entry.validSect.orMask(tbe.reqSect);
-      DPRINTFN("TCP: validSect = %x\n", cache_entry.validSect.getUI64());
+      // DPRINTFN("TCP: validSect = %x\n", cache_entry.validSect.getUI64());
     }
   }
 
@@ -804,6 +856,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     l_loadDoneHit;
     mru_updateMRU;
     uu_profileDataHit;
+    // l_updateUsedSecs;
     p_popMandatoryQueue;
   }
 
@@ -830,6 +883,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     t_allocateTBE;
     mru_updateMRU;
     at_atomicThrough;
+    // l_updateUsedSecs;
     p_popMandatoryQueue;
   }
 
