@@ -78,7 +78,8 @@ machine(MachineType:TCC, "TCC Cache")
     WBAck,                  desc="writethrough ack from memory";
     Bypass,                 desc="Bypass the entire L2 cache";
     // For sector caches
-    RdBlkInvSect,           desc="Read an invalid sector in a valid cache line";
+    RdBlkInvSect,           desc="Read an invalid sector in a valid cache line, on a read request";
+    WrBlkBackInvSect,       desc="Read an invalid sector in a valid cache line, on a write request, in WB mode";
   }
 
   // STATES
@@ -91,6 +92,8 @@ machine(MachineType:TCC, "TCC Cache")
     WI, AccessPermission:Busy,      desc="Waiting on Writethrough Ack";
     WIB, AccessPermission:Busy,     desc="Waiting on Writethrough Ack; Will be Bypassed";
     A, AccessPermission:Busy,       desc="Invalid waiting on atomici Data";
+    // For sector caches
+    ISM, AccessPermission:Busy,      desc="Waiting for the missing sectors to be read, on a write request, in WB mode";
   }
 
   enumeration(RequestType, desc="To communicate stats from transitions to recordStats") {
@@ -260,12 +263,10 @@ machine(MachineType:TCC, "TCC Cache")
   }
 
   void setMaskForSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
-    int i := static_cast(int, "value", (origAddr - lineAddr)/16);
-    if ((size%16) > 0) {
-        m.setMask(i, ((size/16) + 1));
-    } else {
-        m.setMask(i, size/16);
-    }
+    int start_sect := static_cast(int, "value", (origAddr - lineAddr) / L2cache.getSectorSize());
+    int end_sect := static_cast(int, "value", (origAddr + size - lineAddr) / L2cache.getSectorSize());
+    int num_sects := static_cast(int, "value", end_sect - start_sect + 1);
+    m.setMask(start_sect, num_sects);
   }
 
   bool isAddrPrstInSector(WriteMask &m, Addr origAddr, Addr lineAddr, int size) {
@@ -400,7 +401,15 @@ machine(MachineType:TCC, "TCC Cache")
                 }
             } else if(WB) {
                 if(presentOrAvail(in_msg.addr)) {
-                    trigger(Event:WrVicBlkBack, in_msg.addr, cache_entry, tbe);
+                    // For sector caches
+                    if ((getState(tbe, cache_entry, in_msg.addr) == State:V ||
+                         getState(tbe, cache_entry, in_msg.addr) == State:M) &&
+                        !isAddrPrstInSector(cache_entry.validSect, in_msg.origAddr, in_msg.addr, in_msg.reqDataSize)) {
+                          // Issue a read first for the missing sector and then write the dirty bytes
+                          trigger(Event:WrBlkBackInvSect, in_msg.addr, cache_entry, tbe);
+                    } else {
+                        trigger(Event:WrVicBlkBack, in_msg.addr, cache_entry, tbe);
+                    }
                 } else {
                     Addr victim :=  L2cache.cacheProbe(in_msg.addr);
                     trigger(Event:L2_Repl, victim, getCacheEntry(victim), TBEs.lookup(victim));
@@ -543,6 +552,31 @@ machine(MachineType:TCC, "TCC Cache")
     }
   }
 
+  // For sector caches
+  action(rdr_receiveDataResponse, "rdr", desc="receive a data response") {
+    // Only read the response from the memory/directory and update the
+    // valid sectors present in the cache entry.
+    peek(responseFromNB_in, ResponseMsg) {
+      if ((getAccessPermission(address) == AccessPermission:NotPresent) ||
+      (getAccessPermission(address) == AccessPermission:Invalid)) {
+        // pass
+      } else {
+        // Update the valid sectors present in the cache line
+        cache_entry.validSect.orMask(tbe.reqSect);
+      }
+    }
+    enqueue(unblockToNB_out, UnblockMsg, 1) {
+      out_msg.addr := address;
+      out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+      out_msg.MessageSize := MessageSizeType:Unblock_Control;
+      peek(responseFromNB_in, ResponseMsg) {
+        out_msg.isGLCSet := in_msg.isGLCSet;
+        out_msg.isSLCSet := in_msg.isSLCSet;
+      }
+      DPRINTF(RubySlicc, "%s\n", out_msg);
+    }
+  }
+
   action(rb_bypassDone, "rb", desc="bypass L2 of read access") {
     peek(responseFromNB_in, ResponseMsg) {
         enqueue(responseToCore_out, ResponseMsg, l2_response_latency) {
@@ -590,12 +624,14 @@ machine(MachineType:TCC, "TCC Cache")
         out_msg.MessageSize := in_msg.MessageSize;
         out_msg.isGLCSet := in_msg.isGLCSet;
         out_msg.isSLCSet := in_msg.isSLCSet;
-        int i := static_cast(int, "value", (in_msg.origAddr - in_msg.addr)/16);
-        if ((in_msg.reqDataSize%16) > 0) {
-            tbe.reqSect.setMask(i, ((in_msg.reqDataSize/16) + 1));
-        } else {
-            tbe.reqSect.setMask(i, in_msg.reqDataSize/16);
-        }
+
+        // For sector caches
+        int start_sect := static_cast(int, "value", (in_msg.origAddr - in_msg.addr) / L2cache.getSectorSize());
+        int end_sect := static_cast(int, "value", (in_msg.origAddr + in_msg.reqDataSize - in_msg.addr) / L2cache.getSectorSize());
+        int num_sects := static_cast(int, "value", end_sect - start_sect + 1);
+        tbe.reqSect.setBlockSize(L2cache.getBlockSize() / L2cache.getSectorSize());
+        tbe.reqSect.setMask(start_sect, num_sects);
+
         // DPRINTFN("rd_requestData: addr = %x, origAddr = %x, len = %d\n", in_msg.addr, in_msg.origAddr, in_msg.reqDataSize);
         DPRINTF(RubySlicc, "out_msg: %s\n", out_msg);
       }
@@ -697,6 +733,9 @@ machine(MachineType:TCC, "TCC Cache")
     if (is_invalid(cache_entry)) {
       set_cache_entry(L2cache.allocate(address, new Entry));
       cache_entry.writeMask.clear();
+      // For sector caches
+      cache_entry.validSect.setBlockSize(L2cache.getBlockSize() / L2cache.getSectorSize());
+      cache_entry.validSect.clear();
     }
   }
 
@@ -1053,6 +1092,7 @@ machine(MachineType:TCC, "TCC Cache")
     p_popRequestQueue;
   }
 
+  // For sector caches
   transition(V, RdBlkInvSect, IV) {TagArrayRead, DataArrayRead} {
     p_profileMiss;
     t_allocateTBE;
@@ -1247,6 +1287,24 @@ machine(MachineType:TCC, "TCC Cache")
     swb_sendWBAck;
     wdb_writeDirtyBytes;
     p_popRequestQueue;
+  }
+
+  // For sector caches
+  transition({V, M}, WrBlkBackInvSect, ISM) {TagArrayRead, DataArrayRead} {
+    p_profileMiss;
+    t_allocateTBE;
+    rd_requestData;
+    p_popRequestQueue;
+  }
+
+  // For sector caches
+  transition(ISM, Data, M) {TagArrayRead, TagArrayWrite, DataArrayWrite} {
+    a_allocateBlock;
+    wcb_writeCacheBlock;
+    rdr_receiveDataResponse;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pr_popResponseQueue;
   }
 
   // Transition to be called when a write request with SLC bit set arrives at an

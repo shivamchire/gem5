@@ -69,6 +69,9 @@ operator<<(std::ostream& out, const CacheMemory& obj)
     return out;
 }
 
+int CacheMemory::getBlockSize() { return m_block_size; }
+int CacheMemory::getSectorSize() { return m_sector_size; }
+
 CacheMemory::CacheMemory(const Params &p)
     : SimObject(p),
     dataArray(p.dataArrayBanks, p.dataAccessLatency, p.start_index_bit),

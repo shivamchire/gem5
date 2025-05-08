@@ -160,6 +160,10 @@ class CacheMemory : public SimObject
     void setRubySystem(RubySystem* rs);
 
   public:
+    // int getBlockSize() const { return m_block_size; }
+    // int getSectorSize() const { return m_sector_size; }
+    int getBlockSize() const;
+    int getSectorSize() const;
     int getCacheSize() const { return m_cache_size; }
     int getCacheAssoc() const { return m_cache_assoc; }
     int getNumBlocks() const { return m_cache_num_sets * m_cache_assoc; }
@@ -201,7 +205,7 @@ class CacheMemory : public SimObject
     int m_start_index_bit;
     bool m_resource_stalls;
     int m_block_size;
-	int m_sector_size = 16;
+	  int m_sector_size = 16;
 
     /**
      * We store all the ReplacementData in a 2-dimensional array. By doing
