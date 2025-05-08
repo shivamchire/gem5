@@ -106,6 +106,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     bool FromL2, default="false", desc="block just moved from L2";
     WriteMask writeMask, desc="written bytes masks";
     WriteMask validSect,        desc="Sectors which are valid";
+    WriteMask secTouchMask, desc="Sectors which have been read";
   }
 
   structure(TBE, desc="...") {
@@ -116,9 +117,10 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     bool Shared,       desc="Victim hit by shared probe";
     bool isGLCSet,     desc="Bypass L1 Cache";
     bool isSLCSet,     desc="Bypass L1 and L2 Cache";
-    WriteMask reqSect,               desc="Sectors for which request was send";
+    WriteMask reqSect,               desc="Sectors for which request was send, will become secTouchMask in cache_entry";
+    WriteMask validSect, desc="The sectors that will be valid";
     // int predictor,      desc="bdfb";
-    WriteMask secUseMask, desc="Which sectors were touched";
+    // WriteMask secUseMask, desc="Which sectors were touched";
    }
 
   structure(TBETable, external="yes") {
@@ -345,15 +347,19 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
             // Check predictor
             if (getState(tbe, cache_entry, in_msg.LineAddress) == State:V && !isAddrPrstInSector(cache_entry.validSect, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size)) {
                 DPRINTFN("Triggering RdBlkInvSect event\n");
+                predictor := predictor + 1; // TODO: Set upper limit
                 trigger(Event:RdBlkInvSect, in_msg.LineAddress, cache_entry, tbe);
+            } else if (getState(tbe, cache_entry, in_msg.LineAddress) == State:V) {
+                DPRINTFN("Load, updating usedsecs\n");
+                // DPRINTFN("%d",tbe.secUseMask.getBlockSize());
+                // DPRINTFN(" %d",tbe.secUseMask.count());
+                // // DPRINTFN(" %d",tbe.reqSect.count());
+                // DPRINTFN(" %x", in_msg.PhysicalAddress);
+                // DPRINTFN(" %x", in_msg.LineAddress);
+                // DPRINTFN(" %d\n", in_msg.Size);
+                setMaskForSector(cache_entry.secTouchMask, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size);
+                trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
             } else {
-                DPRINTFN("Load, updating usedsecs");
-                DPRINTFN("%d",tbe.secUseMask.getBlockSize());
-                DPRINTFN(" %d",tbe.secUseMask.count());
-                DPRINTFN(" %x", in_msg.PhysicalAddress);
-                DPRINTFN(" %x", in_msg.LineAddress);
-                DPRINTFN(" %d", in_msg.Size);
-                setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size);
                 trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
             }
           }
@@ -390,7 +396,25 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
   // Actions
 
   action(ic_invCache, "ic", desc="invalidate cache") {
-    if(is_valid(cache_entry)) {
+      if(is_valid(cache_entry)) {
+        // Check used sectors
+      DPRINTFN("Deallocate ");
+      if (cache_entry.secTouchMask.count() >= 2) {
+        DPRINTFN(" towards CG\n");
+        predictor := predictor + 1; // Move towards CG
+        if (predictor > 3) {
+          predictor := 3;
+        }
+      } else {
+        DPRINTFN(" towards FG\n");
+        predictor := predictor - 1; // Move towards FG
+        if (predictor < 0) {
+          predictor := 0;
+        }
+      }
+      DPRINTFN("predictor after deallocate: %d\n",predictor);
+      cache_entry.secTouchMask.clear();
+      // cache_entry.valid
       cache_entry.writeMask.clear();
       L1cache.deallocate(address);
     }
@@ -419,21 +443,21 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       peek(mandatoryQueue_in, RubyRequest) {
         out_msg.isGLCSet := in_msg.isGLCSet;
         out_msg.isSLCSet := in_msg.isSLCSet;
-        DPRINTFN("RdBlk ");
-
         // If CG, set origAddr to address? and size to 64?, set used secs to current sec
         if (predictor < 2) {
           DPRINTFN("predicting FG\n");
           out_msg.origAddr := in_msg.PhysicalAddress;
           out_msg.reqDataSize := in_msg.Size;
           setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
-          setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, address, in_msg.Size);
+          setMaskForSector(tbe.validSect, in_msg.PhysicalAddress, address, in_msg.Size);
+          // setMaskForSector(cache_entry.secTouchMask, in_msg.PhysicalAddress, address, in_msg.Size);
         } else {
-          DPRINTFN("predicting CG");
+          DPRINTFN("predicting CG\n");
           out_msg.origAddr := address;
           out_msg.reqDataSize := 64;
-          setMaskForSector(tbe.reqSect, address, address, 64);
-          setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, address, in_msg.Size);
+          setMaskForSector(tbe.validSect, address, address, 64);
+          setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
+          // setMaskForSector(cache_entry.secTouchMask, in_msg.PhysicalAddress, address, in_msg.Size);
         }
 
         // DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
@@ -590,23 +614,6 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
   }
 
   action(d_deallocateTBE, "d", desc="Deallocate TBE") {
-    // Check used sectors
-    DPRINTFN("Deallocate TBE ");
-    if (tbe.secUseMask.count() >= 2) {
-      DPRINTFN(" towards CG\n");
-      predictor := predictor + 1; // Move towards CG
-      if (predictor > 3) {
-        predictor := 3;
-      }
-    } else {
-      DPRINTFN(" towards FG\n");
-      predictor := predictor - 1; // Move towards FG
-      if (predictor < 0) {
-        predictor := 0;
-      }
-    }
-    DPRINTFN("predictor after deallocate: %d",predictor);
-    tbe.secUseMask.clear();
     tbe.reqSect.clear();
     TBEs.deallocate(address);
     unset_tbe();
@@ -786,7 +793,8 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       DataBlock tmp := in_msg.DataBlk;
       tmp.copyPartial(cache_entry.DataBlk,cache_entry.writeMask);
       cache_entry.DataBlk := tmp;
-      cache_entry.validSect.orMask(tbe.reqSect);
+      cache_entry.validSect.orMask(tbe.validSect);
+      cache_entry.secTouchMask.orMask(tbe.reqSect);
       // DPRINTFN("TCP: validSect = %x\n", cache_entry.validSect.getUI64());
     }
   }
