@@ -1302,6 +1302,9 @@ machine(MachineType:TCC, "TCC Cache")
     a_allocateBlock;
     wcb_writeCacheBlock;
     rdr_receiveDataResponse;
+    ut_updateTag;
+    w_sendResponseWBAck;
+    wdb_writeDirtyBytes;
     wada_wakeUpAllDependentsAddr;
     dt_deallocateTBE;
     pr_popResponseQueue;
