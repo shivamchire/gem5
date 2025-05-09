@@ -350,13 +350,7 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
                 predictor := predictor + 1; // TODO: Set upper limit
                 trigger(Event:RdBlkInvSect, in_msg.LineAddress, cache_entry, tbe);
             } else if (getState(tbe, cache_entry, in_msg.LineAddress) == State:V) {
-                DPRINTFN("Load, updating usedsecs\n");
-                // DPRINTFN("%d",tbe.secUseMask.getBlockSize());
-                // DPRINTFN(" %d",tbe.secUseMask.count());
-                // // DPRINTFN(" %d",tbe.reqSect.count());
-                // DPRINTFN(" %x", in_msg.PhysicalAddress);
-                // DPRINTFN(" %x", in_msg.LineAddress);
-                // DPRINTFN(" %d\n", in_msg.Size);
+                DPRINTF(VIPER_Predictor, "Load valid sector, updating usedsecs\n");
                 setMaskForSector(cache_entry.secTouchMask, in_msg.PhysicalAddress, in_msg.LineAddress, in_msg.Size);
                 trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
             } else {
@@ -398,21 +392,20 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
   action(ic_invCache, "ic", desc="invalidate cache") {
       if(is_valid(cache_entry)) {
         // Check used sectors
-      DPRINTFN("Deallocate ");
       if (cache_entry.secTouchMask.count() >= 2) {
-        DPRINTFN(" towards CG\n");
+        DPRINTF(VIPER_Predictor, "Predictor towards CG\n");
         predictor := predictor + 1; // Move towards CG
         if (predictor > 3) {
           predictor := 3;
         }
       } else {
-        DPRINTFN(" towards FG\n");
+        DPRINTF(VIPER_Predictor, "Predictor towards FG\n");
         predictor := predictor - 1; // Move towards FG
         if (predictor < 0) {
           predictor := 0;
         }
       }
-      DPRINTFN("predictor after deallocate: %d\n",predictor);
+      DPRINTF(VIPER_Predictor, "predictor after deallocate: %d\n",predictor);
       cache_entry.secTouchMask.clear();
       // cache_entry.valid
       cache_entry.writeMask.clear();
@@ -420,15 +413,6 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
     }
     unset_cache_entry();
   }
-
-  // action(l_updateUsedSecs, "lus", desc="Update which sectors are touched") {
-  //   DPRINTFN("Updating usedsecs from ");
-  //   peek(mandatoryQueue_in, RubyRequest) {
-  //     DPRINTFN("%d",tbe.secUseMask.count());
-  //     setMaskForSector(tbe.secUseMask, in_msg.PhysicalAddress, address, in_msg.Size);
-  //     DPRINTFN(" to %d\n",tbe.secUseMask.count());
-  //   }
-  // }
 
   action(n_issueRdBlk, "n", desc="Issue RdBlk") {
     // Check if physical address differs from sectors
@@ -443,21 +427,18 @@ machine(MachineType:TCP, "GPU TCP (L1 Data Cache)")
       peek(mandatoryQueue_in, RubyRequest) {
         out_msg.isGLCSet := in_msg.isGLCSet;
         out_msg.isSLCSet := in_msg.isSLCSet;
-        // If CG, set origAddr to address? and size to 64?, set used secs to current sec
         if (predictor < 2) {
-          DPRINTFN("predicting FG\n");
+          DPRINTF(VIPER_Predictor, "predicting FG\n");
           out_msg.origAddr := in_msg.PhysicalAddress;
           out_msg.reqDataSize := in_msg.Size;
           setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
           setMaskForSector(tbe.validSect, in_msg.PhysicalAddress, address, in_msg.Size);
-          // setMaskForSector(cache_entry.secTouchMask, in_msg.PhysicalAddress, address, in_msg.Size);
         } else {
-          DPRINTFN("predicting CG\n");
+          DPRINTF(VIPER_Predictor, "predicting CG\n");
           out_msg.origAddr := address;
           out_msg.reqDataSize := 64;
           setMaskForSector(tbe.validSect, address, address, 64);
           setMaskForSector(tbe.reqSect, in_msg.PhysicalAddress, address, in_msg.Size);
-          // setMaskForSector(cache_entry.secTouchMask, in_msg.PhysicalAddress, address, in_msg.Size);
         }
 
         // DPRINTFN("TCP:n_issueRdBlk: address = %x, LineAddress = %x, origAddr = %x, len = %d\n", address, in_msg.LineAddress, in_msg.PhysicalAddress, in_msg.Size);
